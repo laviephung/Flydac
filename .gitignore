@@ -1,0 +1,12 @@
+node_modules/
+
+data/
+output/
+
+private.txt
+proxies.txt
+wallets.txt
+scptovsp.txt
+
+.env
+.env.*

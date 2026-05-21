@@ -2,8 +2,8 @@ const axios = require('axios');
 const { log } = require('./utils');
 
 // Dien token va chat_id vao day
-const TELEGRAM_BOT_TOKEN = '8674425599:AAE0Rnu9nfzfFNBk0_kCxNBmYwdElt9ElNw';
-const TELEGRAM_CHAT_ID   = '1747619090';
+const TELEGRAM_BOT_TOKEN = 'vào';
+const TELEGRAM_CHAT_ID   = 'vào';
 let telegramOffset = 0;
 let commandPolling = false;
 

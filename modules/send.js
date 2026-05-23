@@ -31,11 +31,9 @@ function pickRandom(arr, n) {
 /** Tao provider co proxy */
 function buildProvider(proxyUrl) {
   const agent = new HttpsProxyAgent(proxyUrl);
-  return new ethers.JsonRpcProvider(
-    { url: RPC, fetchOptions: { agent } },
-    undefined,
-    { staticNetwork: true }
-  );
+  const fetchReq = new ethers.FetchRequest(RPC);
+  fetchReq.getUrlFunc = ethers.FetchRequest.createGetUrlFunc({ agent });
+  return new ethers.JsonRpcProvider(fetchReq, undefined, { staticNetwork: true });
 }
 
 /** Gui 1 tx, khong doi confirm */

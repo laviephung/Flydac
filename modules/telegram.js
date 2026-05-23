@@ -65,6 +65,29 @@ async function sendTelegram(message) {
   }
 }
 
+// Tu dong set menu lenh hien thi khi go / trong Telegram
+async function setBotCommands() {
+  if (!TELEGRAM_BOT_TOKEN || TELEGRAM_BOT_TOKEN === 'YOUR_BOT_TOKEN') return;
+  try {
+    await axios.post(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/setMyCommands`, {
+      commands: [
+        { command: 'help',         description: 'Xem danh sach lenh' },
+        { command: 'status',       description: 'Xem countdown hien tai' },
+        { command: 'wait',         description: 'Xem countdown hien tai' },
+        { command: 'faucet',       description: 'Xem trang thai faucet' },
+        { command: 'faucet_on',    description: 'Bat faucet' },
+        { command: 'faucet_off',   description: 'Tat faucet' },
+        { command: 'faucet_status',description: 'Xem trang thai faucet' },
+        { command: 'send',         description: 'Gui token - vi du: /send 50' },
+        { command: 'send_stop',    description: 'Dung lenh send dang chay' },
+      ],
+    });
+    log('[TG]', 'Da set bot commands thanh cong');
+  } catch (err) {
+    log('[TG]', `Set bot commands loi: ${err.message}`);
+  }
+}
+
 async function fetchTelegramUpdates() {
   if (!TELEGRAM_BOT_TOKEN || TELEGRAM_BOT_TOKEN === 'YOUR_BOT_TOKEN') return [];
 
@@ -279,6 +302,7 @@ async function notifySendDone(stats) {
 module.exports = {
   escapeHtml,
   sendTelegram,
+  setBotCommands,
   notifyError,
   notifyDailySummary,
   notifyDailyDone,

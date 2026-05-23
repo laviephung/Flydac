@@ -3,7 +3,7 @@ const { runDaily }     = require('./modules/daily');
 const { runFaucet }    = require('./modules/faucet');
 const { runCrateLoop } = require('./modules/crate');
 const { runSend }      = require('./modules/send');
-const { escapeHtml, sendTelegram, notifyDailySummary, notifyFaucetBatchDone, notifyCrateBatchDone, notifySendStart, notifySendDone, startTelegramCommandLoop } = require('./modules/telegram');
+const { escapeHtml, sendTelegram, setBotCommands, notifyDailySummary, notifyFaucetBatchDone, notifyCrateBatchDone, notifySendStart, notifySendDone, startTelegramCommandLoop } = require('./modules/telegram');
 
 const DAILY_INTERVAL_MS       = 24 * 60 * 60 * 1000;
 const CRATE_INTERVAL_MS       = 24 * 60 * 60 * 1000;
@@ -490,6 +490,7 @@ async function summaryLoop() {
 
 async function main() {
   log('[START]', `Tool khoi dong luc ${fmtDate(now())}`);
+  await setBotCommands();
   await sendTelegram(`[START] <b>Tool khoi dong</b>\nThoi gian: ${fmtDate(now())}`);
 
   const firstRun = loadJSON('first_run.json');

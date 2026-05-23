@@ -105,7 +105,7 @@ async function processWallet(privateKey, receivers, txCount, walletIndex, totalW
 async function runSend(txCount, isStopped = () => false) {
   const privateKeys = loadPrivateKeys();
   const proxies     = loadFile('proxies.txt');
-  const receivers   = loadFile('wallets.txt').filter(x => {
+  const receivers   = loadFile('walletsend.txt').filter(x => {
     try { return ethers.isAddress(x); } catch { return false; }
   });
 

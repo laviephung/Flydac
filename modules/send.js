@@ -29,11 +29,19 @@ function pickRandom(arr, n) {
 }
 
 /** Tao provider co proxy */
-function buildProvider(proxyUrl) {
+async function buildProvider(proxyUrl) {
   const agent = new HttpsProxyAgent(proxyUrl);
   const fetchReq = new ethers.FetchRequest(RPC);
   fetchReq.getUrlFunc = ethers.FetchRequest.createGetUrlFunc({ agent });
-  return new ethers.JsonRpcProvider(fetchReq, undefined, { staticNetwork: true });
+
+  // Lay chainId truoc de truyen vao, tranh ethers tu detect
+  const tempProvider = new ethers.JsonRpcProvider(fetchReq);
+  const network = await tempProvider.getNetwork();
+  const chainId = Number(network.chainId);
+
+  const fetchReq2 = new ethers.FetchRequest(RPC);
+  fetchReq2.getUrlFunc = ethers.FetchRequest.createGetUrlFunc({ agent });
+  return new ethers.JsonRpcProvider(fetchReq2, chainId, { staticNetwork: true });
 }
 
 /** Gui 1 tx, khong doi confirm */
@@ -68,7 +76,7 @@ async function sendWithRetry(wallet, to, txIndex, totalTx) {
 async function processWallet(privateKey, receivers, txCount, walletIndex, totalWallets, proxies) {
   // Chon proxy ngau nhien cho moi vi
   const proxy    = proxies[Math.floor(Math.random() * proxies.length)];
-  const provider = buildProvider(parseProxy(proxy));
+  const provider = await buildProvider(parseProxy(proxy));
 
   let wallet;
   try {

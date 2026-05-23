@@ -28,6 +28,9 @@ function getTelegramHelpText() {
     `/faucet_status - Xem trang thai faucet`,
     `/faucet_on - Bat faucet`,
     `/faucet_off - Tat faucet`,
+    ``,
+    `/send <so_tx> - Gui token, vi du: /send 50`,
+    `/send_stop - Dung lenh send dang chay`,
   ].join('\n');
 }
 
@@ -102,6 +105,20 @@ async function startTelegramCommandLoop(getWaitStatus, isShuttingDown, handlers 
         } else if (command === '/faucet_status' || command === '/faucet') {
           if (typeof handlers.getFaucetStatus === 'function') {
             await sendTelegram(await handlers.getFaucetStatus());
+          }
+        } else if (command === '/send') {
+          const parts = text.trim().split(/\s+/);
+          const txCount = parseInt(parts[1], 10);
+          if (!txCount || txCount < 1) {
+            await sendTelegram('[SEND] Cu phap sai!\nDung: /send &lt;so_tx&gt;\nVi du: /send 50');
+          } else if (typeof handlers.triggerSend === 'function') {
+            handlers.triggerSend(txCount).catch(async err => {
+              await sendTelegram(`[SEND] <b>Loi khi send</b>\n${escapeHtml(err.message)}`);
+            });
+          }
+        } else if (command === '/send_stop') {
+          if (typeof handlers.stopSend === 'function') {
+            await sendTelegram(await handlers.stopSend());
           }
         }
       } catch (err) {
@@ -217,6 +234,30 @@ async function notifyCrateBatchDone(stats) {
   await sendTelegram(lines.join('\n'));
 }
 
+async function notifySendStart(txCount, totalWallets) {
+  const msg = [
+    `[SEND] <b>Bat dau send</b>`,
+    `Vi gui: ${totalWallets}`,
+    `TX moi vi: ${txCount}`,
+    `Tong TX du kien: ${txCount * totalWallets}`,
+    `Thoi gian: ${new Date().toLocaleString('vi-VN')}`,
+  ].join('\n');
+  await sendTelegram(msg);
+}
+
+async function notifySendDone(stats) {
+  const lines = [
+    `[OK] <b>Send hoan thanh</b>`,
+    `Vi gui: ${stats.totalWallets}`,
+    `TX moi vi: ${stats.txPerWallet}`,
+    `Tong TX: ${stats.totalTx}`,
+    `Thanh cong: ${stats.success}`,
+    `That bai: ${stats.fail}`,
+    `Thoi gian: ${new Date().toLocaleString('vi-VN')}`,
+  ];
+  await sendTelegram(lines.join('\n'));
+}
+
 module.exports = {
   escapeHtml,
   sendTelegram,
@@ -227,5 +268,7 @@ module.exports = {
   notifyFaucetDone,
   notifyFaucetBatchDone,
   notifyCrateBatchDone,
+  notifySendStart,
+  notifySendDone,
   startTelegramCommandLoop,
 };

@@ -2,7 +2,8 @@ const { loadFile, loadJSON, saveJSON, writeOutput, now, fmtDate, fmtTime, log } 
 const { runDaily }     = require('./modules/daily');
 const { runFaucet }    = require('./modules/faucet');
 const { runCrateLoop } = require('./modules/crate');
-const { escapeHtml, sendTelegram, notifyDailySummary, notifyFaucetBatchDone, notifyCrateBatchDone, startTelegramCommandLoop } = require('./modules/telegram');
+const { runSend }      = require('./modules/send');
+const { escapeHtml, sendTelegram, notifyDailySummary, notifyFaucetBatchDone, notifyCrateBatchDone, notifySendStart, notifySendDone, startTelegramCommandLoop } = require('./modules/telegram');
 
 const DAILY_INTERVAL_MS       = 24 * 60 * 60 * 1000;
 const CRATE_INTERVAL_MS       = 24 * 60 * 60 * 1000;
@@ -42,6 +43,42 @@ async function disableFaucet() {
 
 async function getFaucetStatus() {
   return `[TG] Faucet hien dang: ${isFaucetEnabled() ? 'BAT' : 'TAT'}`;
+}
+
+// --- Send ---
+
+let sendInProgress = false;
+let sendShouldStop = false;
+
+async function triggerSend(txCount) {
+  if (sendInProgress) {
+    await sendTelegram('[SEND] Dang co lenh send chay roi, vui long cho xong hoac /send_stop');
+    return;
+  }
+
+  sendInProgress = true;
+  sendShouldStop = false;
+
+  const privateKeys = loadFile('private.txt');
+  await notifySendStart(txCount, privateKeys.length);
+
+  try {
+    const stats = await runSend(txCount, () => sendShouldStop || isShuttingDown);
+    await notifySendDone(stats);
+  } catch (err) {
+    log('[SEND]', `triggerSend loi: ${err.message}`);
+    await sendTelegram(`[SEND] <b>Loi khi send</b>\n${escapeHtml(err.message)}`);
+  } finally {
+    sendInProgress = false;
+    sendShouldStop = false;
+  }
+}
+
+async function stopSend() {
+  if (!sendInProgress) return '[SEND] Khong co lenh send nao dang chay';
+  sendShouldStop = true;
+  log('[SEND]', 'Nhan lenh dung send qua Telegram');
+  return '[SEND] Dang dung send, vui long cho batch hien tai hoan thanh...';
 }
 
 function renderCountdowns() {
@@ -470,6 +507,8 @@ async function main() {
       enableFaucet,
       disableFaucet,
       getFaucetStatus,
+      triggerSend,
+      stopSend,
     }),
   ]);
 }

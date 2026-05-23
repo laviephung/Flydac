@@ -74,7 +74,9 @@ function log(tag, msg) {
 
 function parseProxy(proxyLine) {
   const [host, port, user, pass] = proxyLine.trim().split(':');
-  return `http://${user}:${pass}@${host}:${port}`;
+  const safeUser = encodeURIComponent(user || '');
+  const safePass = encodeURIComponent(pass || '');
+  return `http://${safeUser}:${safePass}@${host}:${port}`;
 }
 
 module.exports = {

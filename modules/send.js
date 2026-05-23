@@ -3,21 +3,16 @@
 // Chay song song theo batch, kich hoat qua Telegram /send <so_tx>
 
 const { ethers } = require('ethers');
-const { log, loadFile } = require('./utils');
+const { HttpsProxyAgent } = require('https-proxy-agent');
+const { log, loadFile, parseProxy } = require('./utils');
 
 const RPC         = 'https://rpctest.dachain.tech';
 const GAS_LIMIT   = 21000;
-const AMOUNT      = '0.001'; // so token moi tx, chinh o day neu can
+const AMOUNT      = '0.001'; // so token moi tx
 const DELAY_MS    = 1500;    // delay giua cac tx cua 1 vi
 const RETRY_LIMIT = 3;
 const RETRY_WAIT  = 5000;
 const BATCH_SIZE  = 5;       // so vi chay cung luc
-
-let _provider = null;
-function getProvider() {
-  if (!_provider) _provider = new ethers.JsonRpcProvider(RPC);
-  return _provider;
-}
 
 function sleep(ms) {
   return new Promise(r => setTimeout(r, ms));
@@ -31,6 +26,16 @@ function loadPrivateKeys() {
 function pickRandom(arr, n) {
   const shuffled = [...arr].sort(() => Math.random() - 0.5);
   return shuffled.slice(0, Math.min(n, arr.length));
+}
+
+/** Tao provider co proxy */
+function buildProvider(proxyUrl) {
+  const agent = new HttpsProxyAgent(proxyUrl);
+  return new ethers.JsonRpcProvider(
+    { url: RPC, fetchOptions: { agent } },
+    undefined,
+    { staticNetwork: true }
+  );
 }
 
 /** Gui 1 tx, khong doi confirm */
@@ -62,10 +67,12 @@ async function sendWithRetry(wallet, to, txIndex, totalTx) {
 /**
  * Xu ly 1 vi: gui txCount tx den txCount dia chi random khac nhau
  */
-async function processWallet(privateKey, receivers, txCount, walletIndex, totalWallets) {
-  const provider = getProvider();
-  let wallet;
+async function processWallet(privateKey, receivers, txCount, walletIndex, totalWallets, proxies) {
+  // Chon proxy ngau nhien cho moi vi
+  const proxy    = proxies[Math.floor(Math.random() * proxies.length)];
+  const provider = buildProvider(parseProxy(proxy));
 
+  let wallet;
   try {
     wallet = new ethers.Wallet(privateKey, provider);
   } catch (err) {
@@ -74,7 +81,7 @@ async function processWallet(privateKey, receivers, txCount, walletIndex, totalW
   }
 
   const targets = pickRandom(receivers, txCount);
-  log('[SEND]', `[${walletIndex}/${totalWallets}] ${wallet.address.slice(0, 10)}... bat dau ${targets.length} tx`);
+  log('[SEND]', `[${walletIndex}/${totalWallets}] ${wallet.address.slice(0, 10)}... bat dau ${targets.length} tx | proxy: ${proxy.split(':').slice(0, 2).join(':')}`);
 
   let success = 0;
   let fail    = 0;
@@ -83,7 +90,6 @@ async function processWallet(privateKey, receivers, txCount, walletIndex, totalW
     const result = await sendWithRetry(wallet, targets[i], i + 1, targets.length);
     if (result.success) success++;
     else fail++;
-
     if (i < targets.length - 1) await sleep(DELAY_MS);
   }
 
@@ -98,17 +104,19 @@ async function processWallet(privateKey, receivers, txCount, walletIndex, totalW
  */
 async function runSend(txCount, isStopped = () => false) {
   const privateKeys = loadPrivateKeys();
+  const proxies     = loadFile('proxies.txt');
   const receivers   = loadFile('wallets.txt').filter(x => {
     try { return ethers.isAddress(x); } catch { return false; }
   });
 
   if (!privateKeys.length) throw new Error('Khong co private key trong private.txt');
+  if (!proxies.length)     throw new Error('Khong co proxy trong proxies.txt');
   if (!receivers.length)   throw new Error('Khong co dia chi hop le trong wallets.txt');
 
   const actualTxCount = Math.min(txCount, receivers.length);
 
   if (receivers.length < txCount) {
-    log('[SEND]', `Canh bao: wallets.txt chi co ${receivers.length} dia chi, moi vi se gui toi da ${actualTxCount} tx`);
+    log('[SEND]', `Canh bao: wallets.txt chi co ${receivers.length} dia chi, moi vi gui toi da ${actualTxCount} tx`);
   }
 
   log('[SEND]', `=== BAT DAU SEND ===`);
@@ -127,7 +135,7 @@ async function runSend(txCount, isStopped = () => false) {
     const batch = privateKeys.slice(i, i + BATCH_SIZE);
     const batchResults = await Promise.all(
       batch.map((pk, j) =>
-        processWallet(pk, receivers, actualTxCount, i + j + 1, privateKeys.length)
+        processWallet(pk, receivers, actualTxCount, i + j + 1, privateKeys.length, proxies)
       )
     );
 

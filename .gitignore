@@ -10,3 +10,4 @@ scptovsp.txt
 
 .env
 .env.*
+!.env.example

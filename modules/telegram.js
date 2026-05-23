@@ -1,9 +1,27 @@
 const axios = require('axios');
+const fs    = require('fs');
+const path  = require('path');
 const { log } = require('./utils');
 
-// Dien token va chat_id vao day
-const TELEGRAM_BOT_TOKEN = 'vào';
-const TELEGRAM_CHAT_ID   = 'vào';
+// Doc .env thu cong (khong can cai dotenv)
+function loadEnv() {
+  const envPath = path.join(__dirname, '../.env');
+  if (!fs.existsSync(envPath)) return;
+  const lines = fs.readFileSync(envPath, 'utf-8').split('\n');
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#')) continue;
+    const idx = trimmed.indexOf('=');
+    if (idx < 0) continue;
+    const key = trimmed.slice(0, idx).trim();
+    const val = trimmed.slice(idx + 1).trim().replace(/^['"]|['"]$/g, '');
+    if (key && !(key in process.env)) process.env[key] = val;
+  }
+}
+loadEnv();
+
+const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
+const TELEGRAM_CHAT_ID   = process.env.TELEGRAM_CHAT_ID   || '';
 let telegramOffset = 0;
 let commandPolling = false;
 

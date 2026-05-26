@@ -5,6 +5,7 @@ const PRE_VISIT_DELAY_MAX_MS = 7000;
 const BETWEEN_REQUEST_DELAY_MIN_MS = 4000;
 const BETWEEN_REQUEST_DELAY_MAX_MS = 8000;
 const FAUCET_RETRY_DELAY_MS = 15000;
+const FAUCET_MAX_RETRY = 3;
 
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -16,6 +17,38 @@ function randomMs(min, max) {
 
 function isRateLimit(err) {
   return err.response?.status === 429;
+}
+
+function isRetryableFaucetError(err) {
+  const status = err.response?.status;
+  return status === 429 || status === 503;
+}
+
+function getFaucetRetryDelay(attempt, err) {
+  const status = err.response?.status;
+  if (status === 429) return FAUCET_RETRY_DELAY_MS * attempt;
+  if (status === 503) return 10000 * attempt;
+  return 5000 * attempt;
+}
+
+async function withFaucetRetry(label, wallet, index, total, action) {
+  for (let attempt = 1; attempt <= FAUCET_MAX_RETRY; attempt++) {
+    try {
+      return await action();
+    } catch (err) {
+      if (!isRetryableFaucetError(err) || attempt === FAUCET_MAX_RETRY) {
+        throw err;
+      }
+
+      const waitMs = getFaucetRetryDelay(attempt, err);
+      const status = err.response?.status || 'unknown';
+      log(
+        '[FAUCET]',
+        `[${index}/${total}] ${wallet.slice(0,10)}... ${label} loi ${status}, cho ${fmtTime(waitMs)} roi thu lai (${attempt}/${FAUCET_MAX_RETRY})...`
+      );
+      await sleep(waitMs);
+    }
+  }
 }
 
 async function getProfile(client) {
@@ -53,7 +86,7 @@ async function runFaucet(wallet, index, total, proxies, sessions, state, firstRu
     saveJSON('sessions.json', sessions);
 
     log('[FAUCET]', `[${index}/${total}] ${wallet.slice(0,10)}... Check profile faucet...`);
-    const profile = await getProfile(result.client);
+    const profile = await withFaucetRetry('Profile faucet', wallet, index, total, () => getProfile(result.client));
     const faucetSecondsLeft = Number(profile.faucet_seconds_left || 0);
     const checkedAt = now();
     const faucetNextAt = checkedAt + (faucetSecondsLeft * 1000);
@@ -81,23 +114,19 @@ async function runFaucet(wallet, index, total, proxies, sessions, state, firstRu
     log('[FAUCET]', `[${index}/${total}] ${wallet.slice(0,10)}... Cho ${(preVisitDelay / 1000).toFixed(1)}s truoc visit faucet...`);
     await sleep(preVisitDelay);
 
-    await result.client.post('https://inception.dachain.io/api/inception/visit/faucet/', null, {
-      headers: { 'content-type': 'application/json', 'x-csrftoken': result.csrftoken, 'referer': 'https://inception.dachain.io/faucet' },
-    });
+    await withFaucetRetry('Visit faucet', wallet, index, total, () =>
+      result.client.post('https://inception.dachain.io/api/inception/visit/faucet/', null, {
+        headers: { 'content-type': 'application/json', 'x-csrftoken': result.csrftoken, 'referer': 'https://inception.dachain.io/faucet' },
+      })
+    );
 
     const betweenDelay = randomMs(BETWEEN_REQUEST_DELAY_MIN_MS, BETWEEN_REQUEST_DELAY_MAX_MS);
     log('[FAUCET]', `[${index}/${total}] ${wallet.slice(0,10)}... Cho ${(betweenDelay / 1000).toFixed(1)}s truoc claim faucet...`);
     await sleep(betweenDelay);
 
-    let faucet;
-    try {
-      faucet = await postFaucet(result.client, result.csrftoken);
-    } catch (err) {
-      if (!isRateLimit(err)) throw err;
-      log('[FAUCET]', `[${index}/${total}] ${wallet.slice(0,10)}... Dinh 429, cho ${fmtTime(FAUCET_RETRY_DELAY_MS)} roi thu lai...`);
-      await sleep(FAUCET_RETRY_DELAY_MS);
-      faucet = await postFaucet(result.client, result.csrftoken);
-    }
+    const faucet = await withFaucetRetry('Claim faucet', wallet, index, total, () =>
+      postFaucet(result.client, result.csrftoken)
+    );
 
     try {
       await postFaucet(result.client, result.csrftoken);

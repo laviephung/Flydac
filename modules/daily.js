@@ -6,6 +6,7 @@ const { notifyError, notifyDailyDone, notifyTargetBadges } = require('./telegram
 const LOGIN_INTERVAL_MS = 24 * 60 * 60 * 1000;
 const DAILY_REQUEST_MAX_RETRY = 3;
 const DAILY_RETRY_DELAY_MS = 3000;
+const PROFILE_REQUIRED_MAX_RETRY = Number(process.env.DAILY_PROFILE_MAX_RETRY || 0);
 
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -37,6 +38,28 @@ async function withDailyRetry(label, wallet, index, total, action, maxRetry = DA
       log('[DAILY]', `[${index}/${total}] ${wallet.slice(0,10)}... ${label} loi lan ${attempt}/${maxRetry}${status ? ` | HTTP ${status}` : ''}: ${msg}`);
       if (!isRetryableDailyError(err) || attempt === maxRetry) throw err;
       await sleep(getDailyRetryDelay(attempt));
+    }
+  }
+}
+
+async function withRequiredProfileRetry(wallet, index, total, action) {
+  let attempt = 1;
+  while (true) {
+    try {
+      return await action();
+    } catch (err) {
+      const status = err.response?.status;
+      const msg = err.message || 'unknown error';
+      const retryLabel = PROFILE_REQUIRED_MAX_RETRY > 0 ? `${attempt}/${PROFILE_REQUIRED_MAX_RETRY}` : `${attempt}/∞`;
+      log('[PROFILE]', `[${index}/${total}] ${wallet.slice(0,10)}... Loi profile lan ${retryLabel}${status ? ` | HTTP ${status}` : ''}: ${msg}`);
+
+      if (!isRetryableDailyError(err)) throw err;
+      if (PROFILE_REQUIRED_MAX_RETRY > 0 && attempt >= PROFILE_REQUIRED_MAX_RETRY) throw err;
+
+      const waitMs = getDailyRetryDelay(Math.min(attempt, 10));
+      log('[PROFILE]', `[${index}/${total}] ${wallet.slice(0,10)}... Cho ${fmtTime(waitMs)} roi retry profile de giu streak...`);
+      await sleep(waitMs);
+      attempt++;
     }
   }
 }
@@ -91,7 +114,7 @@ async function runDaily(wallet, index, total, proxies, sessions, state, firstRun
     }
 
     // Profile
-    const profile = await withDailyRetry('Profile', wallet, index, total, () => getProfile(result.client));
+    const profile = await withRequiredProfileRetry(wallet, index, total, () => getProfile(result.client));
     const xLinked       = profile.x_linked       ? 'OK' : 'NO';
     const discordJoined = profile.discord_joined  ? 'OK' : 'NO';
     const discordLinked = profile.discord_linked  ? 'OK' : 'NO';

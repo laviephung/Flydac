@@ -296,6 +296,15 @@ async function notifySendDone(stats) {
     `That bai: ${stats.fail}`,
     `Thoi gian: ${new Date().toLocaleString('vi-VN')}`,
   ];
+  if (Array.isArray(stats.lowBalanceWallets) && stats.lowBalanceWallets.length > 0) {
+    lines.push('', `<b>Vi khong du so du:</b>`);
+    for (const wallet of stats.lowBalanceWallets.slice(0, 10)) {
+      lines.push(`<code>${wallet.address}</code> | balance: ${wallet.balance} | can: ${wallet.required} | thieu: ${wallet.shortfall}`);
+    }
+    if (stats.lowBalanceWallets.length > 10) {
+      lines.push(`... va ${stats.lowBalanceWallets.length - 10} vi khac`);
+    }
+  }
   await sendTelegram(lines.join('\n'));
 }
 
@@ -329,6 +338,15 @@ async function notifyAutoSendDone(stats) {
     `TX that bai: ${stats.fail}`,
     `Thoi gian: ${new Date().toLocaleString('vi-VN')}`,
   ];
+  if (Array.isArray(stats.lowBalanceWallets) && stats.lowBalanceWallets.length > 0) {
+    lines.push('', `<b>Vi khong du so du:</b>`);
+    for (const wallet of stats.lowBalanceWallets.slice(0, 10)) {
+      lines.push(`<code>${wallet.address}</code> | balance: ${wallet.balance} | can: ${wallet.required} | thieu: ${wallet.shortfall}`);
+    }
+    if (stats.lowBalanceWallets.length > 10) {
+      lines.push(`... va ${stats.lowBalanceWallets.length - 10} vi khac`);
+    }
+  }
   await sendTelegram(lines.join('\n'));
 }
 

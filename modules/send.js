@@ -33,6 +33,15 @@ function loadPrivateKeys() {
   return loadFile('private.txt');
 }
 
+function formatEth(value) {
+  return Number(ethers.formatEther(value)).toFixed(6);
+}
+
+function isInsufficientFundsError(err) {
+  const msg = String(err?.shortMessage || err?.message || '').toLowerCase();
+  return msg.includes('insufficient funds') || msg.includes('intrinsic gas too low balance') || msg.includes('not enough balance');
+}
+
 /** Chon ngau nhien n phan tu KHAC NHAU tu mang arr */
 function pickRandom(arr, n) {
   const shuffled = [...arr].sort(() => Math.random() - 0.5);
@@ -85,6 +94,9 @@ async function sendWithRetry(wallet, to, txIndex, totalTx) {
     } catch (err) {
       const msg = err.shortMessage || err.message;
       log('[SEND]', `${wallet.address.slice(0, 10)}... tx[${txIndex}/${totalTx}] loi (${attempt}/${RETRY_LIMIT}): ${msg}`);
+      if (isInsufficientFundsError(err)) {
+        return { success: false, reason: 'insufficient_funds', message: msg };
+      }
       if (attempt < RETRY_LIMIT) {
         const waitMs = getRetryWait(attempt);
         log('[SEND]', `${wallet.address.slice(0, 10)}... doi ${waitMs}ms roi thu lai`);
@@ -119,13 +131,67 @@ async function processWallet(privateKey, receivers, txCount, walletIndex, totalW
   const targets = pickRandom(receivers, txCount);
   log('[SEND]', `[${walletIndex}/${totalWallets}] ${wallet.address.slice(0, 10)}... bat dau ${targets.length} tx | direct RPC`);
 
+  let feeData;
+  let balance;
+  try {
+    [feeData, balance] = await Promise.all([
+      provider.getFeeData(),
+      provider.getBalance(wallet.address),
+    ]);
+  } catch (err) {
+    log('[SEND]', `[${walletIndex}/${totalWallets}] ${wallet.address.slice(0, 10)}... Khong doc duoc gas/balance: ${err.message}`);
+    return { address: wallet.address, success: 0, fail: txCount, reason: 'balance_check_failed' };
+  }
+
+  const gasPrice = feeData.gasPrice ?? feeData.maxFeePerGas ?? 0n;
+  const valuePerTx = ethers.parseEther(AMOUNT);
+  const estimatedRequired = (valuePerTx * BigInt(targets.length)) + (BigInt(GAS_LIMIT) * gasPrice * BigInt(targets.length));
+
+  if (balance < estimatedRequired) {
+    const shortfall = estimatedRequired - balance;
+    log(
+      '[SEND]',
+      `[${walletIndex}/${totalWallets}] ${wallet.address.slice(0, 10)}... Khong du so du | balance: ${formatEth(balance)} | can: ${formatEth(estimatedRequired)} | thieu: ${formatEth(shortfall)}`
+    );
+    return {
+      address: wallet.address,
+      success: 0,
+      fail: txCount,
+      reason: 'insufficient_funds',
+      balance: formatEth(balance),
+      required: formatEth(estimatedRequired),
+      shortfall: formatEth(shortfall),
+      txPlanned: targets.length,
+    };
+  }
+
   let success = 0;
   let fail    = 0;
 
   for (let i = 0; i < targets.length; i++) {
     const result = await sendWithRetry(wallet, targets[i], i + 1, targets.length);
     if (result.success) success++;
-    else fail++;
+    else {
+      fail++;
+      if (result.reason === 'insufficient_funds') {
+        let latestBalance = balance;
+        try {
+          latestBalance = await provider.getBalance(wallet.address);
+        } catch {}
+        log('[SEND]', `[${walletIndex}/${totalWallets}] ${wallet.address.slice(0, 10)}... Dung vi khong du so du de gui tiep`);
+        return {
+          address: wallet.address,
+          success,
+          fail: fail + (targets.length - i - 1),
+          reason: 'insufficient_funds',
+          balance: formatEth(latestBalance),
+          required: formatEth(estimatedRequired),
+          shortfall: formatEth(estimatedRequired > latestBalance ? (estimatedRequired - latestBalance) : 0n),
+          txPlanned: targets.length,
+          txSent: success,
+        };
+      }
+    }
     if (i < targets.length - 1) await sleep(DELAY_MS);
   }
 
@@ -157,6 +223,7 @@ async function runSend(txCount, isStopped = () => false) {
   log('[SEND]', `Vi gui: ${privateKeys.length} | Dia chi nhan: ${receivers.length} | TX moi vi: ${actualTxCount} | Batch: ${BATCH_SIZE}`);
 
   const walletResults = [];
+  const lowBalanceWallets = [];
   let totalSuccess = 0;
   let totalFail    = 0;
 
@@ -181,6 +248,9 @@ async function runSend(txCount, isStopped = () => false) {
       totalSuccess += r.success;
       totalFail    += r.fail;
       walletResults.push(r);
+      if (r.reason === 'insufficient_funds') {
+        lowBalanceWallets.push(r);
+      }
     }
   }
 
@@ -194,6 +264,7 @@ async function runSend(txCount, isStopped = () => false) {
     success:      totalSuccess,
     fail:         totalFail,
     walletResults,
+    lowBalanceWallets,
   };
 }
 
@@ -248,6 +319,7 @@ async function runAutoSend(walletTxMap, isStopped = () => false) {
   }
 
   const walletResults = [];
+  const lowBalanceWallets = [];
   let totalSuccess = 0;
   let totalFail    = 0;
 
@@ -272,6 +344,9 @@ async function runAutoSend(walletTxMap, isStopped = () => false) {
       totalSuccess += r.success;
       totalFail    += r.fail;
       walletResults.push(r);
+      if (r.reason === 'insufficient_funds') {
+        lowBalanceWallets.push(r);
+      }
     }
   }
 
@@ -283,6 +358,7 @@ async function runAutoSend(walletTxMap, isStopped = () => false) {
     success:      totalSuccess,
     fail:         totalFail,
     walletResults,
+    lowBalanceWallets,
   };
 }
 

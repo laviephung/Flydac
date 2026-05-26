@@ -4,8 +4,8 @@ const { now, fmtDate, fmtTime, log, saveJSON, saveRecordJSON, saveState } = requ
 const { notifyError, notifyDailyDone, notifyTargetBadges } = require('./telegram');
 
 const LOGIN_INTERVAL_MS = 24 * 60 * 60 * 1000;
-const PROFILE_MAX_RETRY = 3;
-const PROFILE_RETRY_DELAY_MS = 2000;
+const DAILY_REQUEST_MAX_RETRY = 3;
+const DAILY_RETRY_DELAY_MS = 3000;
 
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -18,14 +18,25 @@ async function getProfile(client) {
   return res.data;
 }
 
-async function getProfileWithRetry(client, wallet, index, total, maxRetry = PROFILE_MAX_RETRY) {
+function isRetryableDailyError(err) {
+  const status = err.response?.status;
+  return status === 429 || status === 503 || (typeof status === 'number' && status >= 500) || !status;
+}
+
+function getDailyRetryDelay(attempt) {
+  return DAILY_RETRY_DELAY_MS * attempt;
+}
+
+async function withDailyRetry(label, wallet, index, total, action, maxRetry = DAILY_REQUEST_MAX_RETRY) {
   for (let attempt = 1; attempt <= maxRetry; attempt++) {
     try {
-      return await getProfile(client);
+      return await action();
     } catch (err) {
-      log('[PROFILE]', `[${index}/${total}] ${wallet.slice(0,10)}... Loi profile lan ${attempt}/${maxRetry}: ${err.message}`);
-      if (attempt === maxRetry) throw err;
-      await sleep(PROFILE_RETRY_DELAY_MS);
+      const status = err.response?.status;
+      const msg = err.message || 'unknown error';
+      log('[DAILY]', `[${index}/${total}] ${wallet.slice(0,10)}... ${label} loi lan ${attempt}/${maxRetry}${status ? ` | HTTP ${status}` : ''}: ${msg}`);
+      if (!isRetryableDailyError(err) || attempt === maxRetry) throw err;
+      await sleep(getDailyRetryDelay(attempt));
     }
   }
 }
@@ -80,7 +91,7 @@ async function runDaily(wallet, index, total, proxies, sessions, state, firstRun
     }
 
     // Profile
-    const profile = await getProfileWithRetry(result.client, wallet, index, total);
+    const profile = await withDailyRetry('Profile', wallet, index, total, () => getProfile(result.client));
     const xLinked       = profile.x_linked       ? 'OK' : 'NO';
     const discordJoined = profile.discord_joined  ? 'OK' : 'NO';
     const discordLinked = profile.discord_linked  ? 'OK' : 'NO';
@@ -139,12 +150,12 @@ async function runDaily(wallet, index, total, proxies, sessions, state, firstRun
     }
 
     // Visit activity
-    await visitActivity(result.client, result.csrftoken);
+    await withDailyRetry('Visit activity', wallet, index, total, () => visitActivity(result.client, result.csrftoken));
 
     // Badge 1 lan
     if (!saved.badge_claimed) {
       try {
-        await claimBadge(result.client, result.csrftoken);
+        await withDailyRetry('Claim badge', wallet, index, total, () => claimBadge(result.client, result.csrftoken));
         log('[BADGE]', `${wallet.slice(0,10)}... Badge claimed!`);
         sessions[wallet].badge_claimed = true;
         saveJSON('sessions.json', sessions);

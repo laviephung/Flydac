@@ -197,4 +197,93 @@ async function runSend(txCount, isStopped = () => false) {
   };
 }
 
-module.exports = { runSend };
+const TX_TARGET = 50; // Muc tieu tx toi thieu
+
+/**
+ * Map private key -> wallet address (ethers)
+ */
+function deriveAddress(privateKey) {
+  try {
+    const wallet = new ethers.Wallet(privateKey);
+    return wallet.address.toLowerCase();
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Auto send: chi gui cho nhung vi chua du TX_TARGET tx
+ * @param {Object} walletTxMap - { walletAddress(lowercase): txNeeded }
+ * @param {Function} isStopped - callback kiem tra shutdown
+ */
+async function runAutoSend(walletTxMap, isStopped = () => false) {
+  const privateKeys = loadPrivateKeys();
+  const receivers   = loadFile('walletsend.txt').filter(x => {
+    try { return ethers.isAddress(x); } catch { return false; }
+  });
+
+  if (!privateKeys.length) throw new Error('Khong co private key trong private.txt');
+  if (!receivers.length)   throw new Error('Khong co dia chi hop le trong walletsend.txt');
+
+  // Map private key -> address, loc ra nhung vi can gui
+  const tasks = [];
+  for (const pk of privateKeys) {
+    const addr = deriveAddress(pk);
+    if (!addr) continue;
+    const txNeeded = walletTxMap[addr];
+    if (!txNeeded || txNeeded <= 0) continue;
+    const actualTx = Math.min(txNeeded, receivers.length);
+    tasks.push({ privateKey: pk, address: addr, txNeeded: actualTx });
+  }
+
+  if (tasks.length === 0) {
+    log('[AUTO-SEND]', 'Tat ca vi da du TX, khong can gui them');
+    return { totalWallets: 0, success: 0, fail: 0, walletResults: [], skipped: true };
+  }
+
+  log('[AUTO-SEND]', `=== BAT DAU AUTO SEND ===`);
+  log('[AUTO-SEND]', `Vi can gui: ${tasks.length} | Batch: ${BATCH_SIZE}`);
+  for (const t of tasks) {
+    log('[AUTO-SEND]', `  ${t.address.slice(0, 10)}... can gui ${t.txNeeded} tx`);
+  }
+
+  const walletResults = [];
+  let totalSuccess = 0;
+  let totalFail    = 0;
+
+  for (let i = 0; i < tasks.length; i += BATCH_SIZE) {
+    if (isStopped()) {
+      log('[AUTO-SEND]', 'Dung theo yeu cau shutdown');
+      break;
+    }
+
+    const batch = tasks.slice(i, i + BATCH_SIZE);
+    const batchResults = await Promise.all(
+      batch.map((task, j) =>
+        processWallet(task.privateKey, receivers, task.txNeeded, i + j + 1, tasks.length)
+          .catch(err => {
+            log('[AUTO-SEND]', `[${i + j + 1}/${tasks.length}] Wallet crash: ${err.message}`);
+            return { address: task.address, success: 0, fail: task.txNeeded };
+          })
+      )
+    );
+
+    for (const r of batchResults) {
+      totalSuccess += r.success;
+      totalFail    += r.fail;
+      walletResults.push(r);
+    }
+  }
+
+  log('[AUTO-SEND]', `=== KET QUA AUTO SEND ===`);
+  log('[AUTO-SEND]', `Vi da gui: ${walletResults.length}/${tasks.length} | TX OK: ${totalSuccess} | Fail: ${totalFail}`);
+
+  return {
+    totalWallets: tasks.length,
+    success:      totalSuccess,
+    fail:         totalFail,
+    walletResults,
+  };
+}
+
+module.exports = { runSend, runAutoSend, TX_TARGET };

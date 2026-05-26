@@ -55,7 +55,7 @@ async function runDaily(wallet, index, total, proxies, sessions, state, firstRun
   const elapsed = now() - last;
 
   // Skip im lang, khong log
-  if (!force && last > 0 && elapsed < LOGIN_INTERVAL_MS) return;
+  if (!force && last > 0 && elapsed < LOGIN_INTERVAL_MS) return 'skipped';
 
   try {
     log('[LOGIN]', `[${index}/${total}] ${wallet.slice(0,10)}... Dang nhap...`);
@@ -64,7 +64,7 @@ async function runDaily(wallet, index, total, proxies, sessions, state, firstRun
     if (!result.success) {
       log('[ERR]', `[${index}/${total}] Login that bai`);
       await notifyError(wallet, 'Login', 'success = false');
-      return;
+      return 'error';
     }
 
     sessions[wallet].sessionid = result.sessionid;
@@ -88,7 +88,8 @@ async function runDaily(wallet, index, total, proxies, sessions, state, firstRun
     const badgeStatus   = buildBadgeStatus(profile);
     const targetBadges  = badgeStatus.target_badges;
 
-    log('[PROF]', `[${index}/${total}] ${wallet.slice(0,10)}... Streak: ${profile.streak_days} | QE: ${profile.qe_balance} | DACC: ${dacc}`);
+    const txCount      = profile.tx_count || 0;
+    log('[PROF]', `[${index}/${total}] ${wallet.slice(0,10)}... Streak: ${profile.streak_days} | QE: ${profile.qe_balance} | DACC: ${dacc} | TX: ${txCount}`);
     log('[LINK]', `${wallet.slice(0,10)}... X: ${xLinked} | Discord Joined: ${discordJoined} | Discord Linked: ${discordLinked}`);
     if (targetBadges.length > 0) {
       log('[BADGE]', `${wallet.slice(0,10)}... Co badge muc tieu: ${targetBadges.join(', ')}`);
@@ -98,6 +99,7 @@ async function runDaily(wallet, index, total, proxies, sessions, state, firstRun
       streak_days:    profile.streak_days,
       qe_balance:     profile.qe_balance,
       dacc_balance:   dacc,
+      tx_count:       txCount,
       x_linked:       !!profile.x_linked,
       discord_joined: !!profile.discord_joined,
       discord_linked: !!profile.discord_linked,
@@ -157,10 +159,12 @@ async function runDaily(wallet, index, total, proxies, sessions, state, firstRun
 
     log('[OK]', `[${index}/${total}] ${wallet.slice(0,10)}... Daily xong`);
     await notifyDailyDone(wallet, ws.profile);
+    return 'success';
 
   } catch (err) {
     log('[ERR]', `[${index}/${total}] Daily loi: ${err.message}`);
     await notifyError(wallet, 'Daily', err.message);
+    return 'error';
   }
 }
 

@@ -299,6 +299,39 @@ async function notifySendDone(stats) {
   await sendTelegram(lines.join('\n'));
 }
 
+async function notifyAutoSendStart(walletCount, walletDetails) {
+  const detailLines = walletDetails.slice(0, 10).map(w =>
+    `  <code>${w.address.slice(0, 10)}...</code> TX: ${w.currentTx} → can ${w.txNeeded} tx`
+  );
+  if (walletDetails.length > 10) {
+    detailLines.push(`  ... va ${walletDetails.length - 10} vi khac`);
+  }
+  const msg = [
+    `[AUTO-SEND] <b>Tu dong gui TX</b>`,
+    `Vi chua du 50 TX: ${walletCount}`,
+    ``,
+    ...detailLines,
+    ``,
+    `Thoi gian: ${new Date().toLocaleString('vi-VN')}`,
+  ].join('\n');
+  await sendTelegram(msg);
+}
+
+async function notifyAutoSendDone(stats) {
+  if (stats.skipped) {
+    await sendTelegram(`[AUTO-SEND] Tat ca vi da du 50 TX ✅`);
+    return;
+  }
+  const lines = [
+    `[AUTO-SEND] <b>Auto send hoan thanh</b>`,
+    `Vi da gui: ${stats.totalWallets}`,
+    `TX thanh cong: ${stats.success}`,
+    `TX that bai: ${stats.fail}`,
+    `Thoi gian: ${new Date().toLocaleString('vi-VN')}`,
+  ];
+  await sendTelegram(lines.join('\n'));
+}
+
 module.exports = {
   escapeHtml,
   sendTelegram,
@@ -312,5 +345,7 @@ module.exports = {
   notifyCrateBatchDone,
   notifySendStart,
   notifySendDone,
+  notifyAutoSendStart,
+  notifyAutoSendDone,
   startTelegramCommandLoop,
 };

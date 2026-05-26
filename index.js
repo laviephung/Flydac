@@ -2,8 +2,8 @@ const { loadFile, loadJSON, saveJSON, writeOutput, now, fmtDate, fmtTime, log } 
 const { runDaily }     = require('./modules/daily');
 const { runFaucet }    = require('./modules/faucet');
 const { runCrateLoop } = require('./modules/crate');
-const { runSend }      = require('./modules/send');
-const { escapeHtml, sendTelegram, setBotCommands, notifyDailySummary, notifyFaucetBatchDone, notifyCrateBatchDone, notifySendStart, notifySendDone, startTelegramCommandLoop } = require('./modules/telegram');
+const { runSend, runAutoSend, TX_TARGET } = require('./modules/send');
+const { escapeHtml, sendTelegram, setBotCommands, notifyDailySummary, notifyFaucetBatchDone, notifyCrateBatchDone, notifySendStart, notifySendDone, notifyAutoSendStart, notifyAutoSendDone, startTelegramCommandLoop } = require('./modules/telegram');
 
 const DAILY_INTERVAL_MS       = 24 * 60 * 60 * 1000;
 const CRATE_INTERVAL_MS       = 24 * 60 * 60 * 1000;
@@ -175,6 +175,7 @@ process.on('unhandledRejection', async (reason) => {
 function writeWarningFiles(state) {
   const notLinked = [];
   const lowDacc   = [];
+  const lowTx     = [];
 
   for (const [wallet, ws] of Object.entries(state)) {
     if (wallet === '_meta' || !ws.profile) continue;
@@ -191,13 +192,19 @@ function writeWarningFiles(state) {
     if (parseFloat(p.dacc_balance) < 1) {
       lowDacc.push(`${wallet} | DACC: ${p.dacc_balance}`);
     }
+
+    const txCount = p.tx_count || 0;
+    if (txCount < TX_TARGET) {
+      lowTx.push(`${wallet} | TX: ${txCount}/${TX_TARGET} (can ${TX_TARGET - txCount} tx)`);
+    }
   }
 
   writeOutput('warning_not_linked.txt', notLinked.length > 0 ? notLinked : ['Tat ca da link day du!']);
   writeOutput('warning_low_dacc.txt',   lowDacc.length   > 0 ? lowDacc   : ['Tat ca DACC >= 1!']);
-  log('[WARN]', `Warning: ${notLinked.length} vi chua link | ${lowDacc.length} vi DACC thap`);
+  writeOutput('warning_low_tx.txt',     lowTx.length     > 0 ? lowTx     : [`Tat ca da du ${TX_TARGET} TX!`]);
+  log('[WARN]', `Warning: ${notLinked.length} vi chua link | ${lowDacc.length} vi DACC thap | ${lowTx.length} vi chua du ${TX_TARGET} TX`);
 
-  return { notLinked: notLinked.length, lowDacc: lowDacc.length };
+  return { notLinked: notLinked.length, lowDacc: lowDacc.length, lowTx: lowTx.length };
 }
 
 function buildSummary(state, wallets) {
@@ -386,6 +393,7 @@ async function dailyFaucetLoop() {
     const sessions = loadJSON('sessions.json');
     const state    = loadJSON('state.json');
     const firstRun = loadJSON('first_run.json');
+    const dailyRefreshedWallets = new Set();
 
     log('[LOOP]', `[Daily/Faucet] Check ${wallets.length} wallets...`);
     const faucetEnabled = isFaucetEnabled();
@@ -400,7 +408,10 @@ async function dailyFaucetLoop() {
       if (!state[wallet]) state[wallet] = {};
 
       if (shouldRunDaily) {
-        await runDaily(wallet, i + 1, wallets.length, proxies, sessions, state, firstRun, { force: true });
+        const dailyStatus = await runDaily(wallet, i + 1, wallets.length, proxies, sessions, state, firstRun, { force: true });
+        if (dailyStatus === 'success') {
+          dailyRefreshedWallets.add(wallet);
+        }
       }
       if (!faucetEnabled) {
         continue;
@@ -417,6 +428,45 @@ async function dailyFaucetLoop() {
       initialDailyRunPending = false;
       nextDailyRunAt = calcNextDailyRunAt(now());
       log('[DAILY]', `Lan daily tiep theo luc ${fmtDate(nextDailyRunAt)}`);
+
+      // --- Auto Send: gui tx cho vi chua du TX_TARGET ---
+      if (!isShuttingDown && !sendInProgress) {
+        try {
+          const autoSendState = loadJSON('state.json');
+          const walletTxMap = {};
+          const walletDetails = [];
+
+          for (const wallet of dailyRefreshedWallets) {
+            const ws = autoSendState[wallet];
+            if (!ws?.profile) continue;
+            const txCount = ws.profile.tx_count || 0;
+            if (txCount < TX_TARGET) {
+              const txNeeded = TX_TARGET - txCount;
+              walletTxMap[wallet] = txNeeded;
+              walletDetails.push({ address: wallet, currentTx: txCount, txNeeded });
+            }
+          }
+
+          if (walletDetails.length > 0) {
+            log('[AUTO-SEND]', `Tim thay ${walletDetails.length} vi chua du ${TX_TARGET} TX, bat dau auto send...`);
+            await notifyAutoSendStart(walletDetails.length, walletDetails);
+
+            sendInProgress = true;
+            try {
+              const autoStats = await runAutoSend(walletTxMap, () => sendShouldStop || isShuttingDown);
+              await notifyAutoSendDone(autoStats);
+            } finally {
+              sendInProgress = false;
+              sendShouldStop = false;
+            }
+          } else {
+            log('[AUTO-SEND]', `Tat ca vi da du ${TX_TARGET} TX`);
+          }
+        } catch (err) {
+          log('[AUTO-SEND]', `Loi auto send: ${err.message}`);
+          await sendTelegram(`[AUTO-SEND] <b>Loi</b>\n${escapeHtml(err.message)}`);
+        }
+      }
     }
 
     if (faucetEnabled) {
